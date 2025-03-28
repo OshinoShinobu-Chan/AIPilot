@@ -1,0 +1,11 @@
+[package]
+name = "aipilot"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fern = "0.7.1"
+json = "0.12.4"
+log = "0.4.27"
+reqwest = "0.12.15"
+tokio = { version = "1.44.1", features = ["full"] }
