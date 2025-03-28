@@ -98,7 +98,7 @@ impl DeepSeekClient {
     /// Get a request string from the client and history chats, and send the request
     /// to the DeepSeek API. This function is asynchronous.
     /// The request string is in json format.
-    pub async fn send_request(&self, chats: Vec<Chat>) -> DeepSeekResult<String> {
+    pub async fn send_request(&self, chats: Vec<Chat>) -> DeepSeekResult<JsonValue> {
         if !self.check_params() {
             return Err(DeepSeekError::new(
                 DeepSeekErrorType::RequestParamError,
@@ -109,10 +109,22 @@ impl DeepSeekClient {
         // api key is already checked in check_params, so unwrap is safe here
         let api_key = self.api_key.clone().unwrap();
         let response = Self::send_request_raw(request, api_key).await?;
-        let response_text = response.text().await.map_err(|_| {
+        let response_text = json::parse(
+            response
+                .text()
+                .await
+                .map_err(|e| {
+                    DeepSeekError::new(
+                        DeepSeekErrorType::RequestError,
+                        format!("Failed to read response text. {}", e),
+                    )
+                })?
+                .as_str(),
+        )
+        .map_err(|e| {
             DeepSeekError::new(
                 DeepSeekErrorType::RequestError,
-                "Failed to read response text.".to_string(),
+                format!("Failed to parse response text. {}", e),
             )
         })?;
         Ok(response_text)
