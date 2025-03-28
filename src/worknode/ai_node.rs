@@ -20,6 +20,8 @@
 
 pub mod deepseek;
 
+use deepseek::DeepSeekClient;
+
 #[derive(Debug)]
 /// The struct of one round of the chat.
 pub struct Chat {
@@ -37,14 +39,7 @@ impl Chat {
 #[derive(Debug)]
 /// The enum of the AI service.
 pub enum AIService {
-    DeepSeek {
-        /// The url of the DeepSeek API.
-        url: String,
-        /// The api key of the DeepSeek API.
-        api_key: String,
-        /// The model of DeepSeek.
-        model: String,
-    },
+    DeepSeek { client: DeepSeekClient },
 }
 
 #[derive(Debug)]
@@ -57,11 +52,7 @@ pub struct AINode {
 
 impl AIService {
     /// Create a new AIService.
-    pub fn new_deepseek(url: String, api_key: String, model: String) -> AIService {
-        AIService::DeepSeek {
-            url,
-            api_key,
-            model,
-        }
+    pub fn new_deepseek(client: DeepSeekClient) -> AIService {
+        AIService::DeepSeek { client }
     }
 }
