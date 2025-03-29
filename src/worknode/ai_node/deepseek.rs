@@ -539,6 +539,37 @@ impl DeepSeekClient {
     }
 }
 
+use crate::error::ai_node_error::{AINodeError, AINodeErrorType, AINodeResult};
+impl super::AINode {
+    pub(super) async fn deepseek_execute(&mut self) -> AINodeResult<String> {
+        let client = match &mut self.service {
+            super::AIService::DeepSeek { client: client } => client,
+            _ => {
+                unreachable!()
+            }
+        };
+        let prompt = format!(
+            "{}\n{}\n{}",
+            self.prompt_prefix, self.input, self.prompt_suffix
+        );
+        self.histroy
+            .push(Chat::new("user".to_string(), prompt.clone()));
+        let response = client.send_request(&self.histroy).await.map_err(|e| {
+            AINodeError::new(
+                AINodeErrorType::DeepSeekError(e),
+                "Failed to send request to DeepSeek".to_string(),
+            )
+        })?;
+        let response_text = response["choices"][0]["message"]["content"].to_string();
+        self.histroy.push(Chat::new(
+            "assistant".to_string(),
+            response_text.to_string(),
+        ));
+
+        Ok(response_text.to_string())
+    }
+}
+
 impl std::fmt::Display for DeepSeekModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

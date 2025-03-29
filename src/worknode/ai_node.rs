@@ -20,7 +20,7 @@
 
 pub mod deepseek;
 
-use crate::error::ai_node_error::{AINodeError, AINodeErrorType, AINodeResult};
+use crate::error::ai_node_error::AINodeResult;
 use deepseek::DeepSeekClient;
 
 #[derive(Debug)]
@@ -87,27 +87,7 @@ impl AINode {
     }
     pub async fn execute(&mut self) -> AINodeResult<String> {
         match &mut self.service {
-            AIService::DeepSeek { client } => {
-                let prompt = format!(
-                    "{}\n{}\n{}",
-                    self.prompt_prefix, self.input, self.prompt_suffix
-                );
-                self.histroy
-                    .push(Chat::new("user".to_string(), prompt.clone()));
-                let response = client.send_request(&self.histroy).await.map_err(|e| {
-                    AINodeError::new(
-                        AINodeErrorType::DeepSeekError(e),
-                        "Failed to send request to DeepSeek".to_string(),
-                    )
-                })?;
-                let response_text = response["choices"][0]["message"]["content"].to_string();
-                self.histroy.push(Chat::new(
-                    "assistant".to_string(),
-                    response_text.to_string(),
-                ));
-
-                Ok(response_text.to_string())
-            }
+            AIService::DeepSeek { client: _ } => self.deepseek_execute().await,
         }
     }
     /// Set the role of teh assistant as builder.
