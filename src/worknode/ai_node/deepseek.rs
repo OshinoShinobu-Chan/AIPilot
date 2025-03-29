@@ -11,7 +11,7 @@ use json::{object, JsonValue};
 
 use reqwest::Response;
 
-const DEEPSEEK_API_URL: &str = "https://api.deepseek.com/chat/completions";
+pub const DEEPSEEK_API_URL: &str = "https://api.deepseek.com/chat/completions";
 
 #[derive(Debug, Clone)]
 pub enum ResponseFormat {
@@ -31,6 +31,49 @@ pub struct StreamOption {
 pub enum DeepSeekModel {
     DeepseekChat,
     DeepseekReasoner,
+}
+
+#[derive(Debug, Clone, Copy)]
+/// The struct of usage statistics.
+pub struct DeepSeekUsage {
+    /// The number of tokens used in the response.
+    completion_tokens: i64,
+    /// The number of tokens used in the request.
+    prompt_tokens: i64,
+    /// The number of tokens used in the request that hits the cache.
+    prompt_cache_hit_tokens: i64,
+    /// The number of tokens used in the request that misses the cache.
+    prompt_cache_miss_tokens: i64,
+    /// The total number of tokens used.
+    total_tokens: i64,
+}
+
+impl DeepSeekUsage {
+    /// Create a new DeepSeekUsage.
+    pub fn new() -> Self {
+        DeepSeekUsage {
+            completion_tokens: 0,
+            prompt_tokens: 0,
+            prompt_cache_hit_tokens: 0,
+            prompt_cache_miss_tokens: 0,
+            total_tokens: 0,
+        }
+    }
+}
+
+impl std::ops::Add for DeepSeekUsage {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        DeepSeekUsage {
+            completion_tokens: self.completion_tokens + other.completion_tokens,
+            prompt_tokens: self.prompt_tokens + other.prompt_tokens,
+            prompt_cache_hit_tokens: self.prompt_cache_hit_tokens + other.prompt_cache_hit_tokens,
+            prompt_cache_miss_tokens: self.prompt_cache_miss_tokens
+                + other.prompt_cache_miss_tokens,
+            total_tokens: self.total_tokens + other.total_tokens,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -75,6 +118,10 @@ pub struct DeepSeekClient {
     logprobs: bool,
     /// Return the top n tokens in every position. Can only be used when logprobs is true.
     top_logprobs: Option<i32>,
+    /// The total usage statistics of the client.
+    total_usage: DeepSeekUsage,
+    /// The last usage statistics of the client.
+    last_usage: DeepSeekUsage,
 }
 
 impl DeepSeekClient {
@@ -93,12 +140,15 @@ impl DeepSeekClient {
             top_p: None,
             logprobs: false,
             top_logprobs: None,
+            total_usage: DeepSeekUsage::new(),
+            last_usage: DeepSeekUsage::new(),
         }
     }
     /// Get a request string from the client and history chats, and send the request
     /// to the DeepSeek API. This function is asynchronous.
     /// The request string is in json format.
-    pub async fn send_request(&self, chats: Vec<Chat>) -> DeepSeekResult<JsonValue> {
+    /// This function garantees that the request consist the response message.
+    pub async fn send_request(&mut self, chats: &Vec<Chat>) -> DeepSeekResult<JsonValue> {
         if !self.check_params() {
             return Err(DeepSeekError::new(
                 DeepSeekErrorType::RequestParamError,
@@ -127,6 +177,60 @@ impl DeepSeekClient {
                 format!("Failed to parse response text. {}", e),
             )
         })?;
+        // check response
+        if response_text["choices"][0]["message"]["content"].is_null() {
+            return Err(DeepSeekError::new(
+                DeepSeekErrorType::ResponseError,
+                "The response format is not valid.".to_string(),
+            ));
+        } else if response_text["choices"][0]["message"]["content"].is_empty() {
+            return Err(DeepSeekError::new(
+                DeepSeekErrorType::ResponseError,
+                "The response is empty.".to_string(),
+            ));
+        }
+        // dump the usage statistics
+        let usage = response_text["usage"].clone();
+        if usage.is_null() {
+            return Err(DeepSeekError::new(
+                DeepSeekErrorType::ResponseError,
+                "The response does not contain usage statistics.".to_string(),
+            ));
+        } else if usage.is_empty() {
+            return Err(DeepSeekError::new(
+                DeepSeekErrorType::ResponseError,
+                "The usage statistics is empty.".to_string(),
+            ));
+        }
+        self.last_usage = DeepSeekUsage {
+            completion_tokens: usage["completion_tokens"]
+                .as_i64()
+                .ok_or(DeepSeekError::new(
+                    DeepSeekErrorType::ResponseError,
+                    "The response does not contain completion tokens.".to_string(),
+                ))?,
+            prompt_tokens: usage["prompt_tokens"].as_i64().ok_or(DeepSeekError::new(
+                DeepSeekErrorType::ResponseError,
+                "The response does not contain prompt tokens.".to_string(),
+            ))?,
+            prompt_cache_hit_tokens: usage["prompt_cache_hit_tokens"].as_i64().ok_or(
+                DeepSeekError::new(
+                    DeepSeekErrorType::ResponseError,
+                    "The response does not contain prompt cache hit tokens.".to_string(),
+                ),
+            )?,
+            prompt_cache_miss_tokens: usage["prompt_cache_miss_tokens"].as_i64().ok_or(
+                DeepSeekError::new(
+                    DeepSeekErrorType::ResponseError,
+                    "The response does not contain prompt cache miss tokens.".to_string(),
+                ),
+            )?,
+            total_tokens: usage["total_tokens"].as_i64().ok_or(DeepSeekError::new(
+                DeepSeekErrorType::ResponseError,
+                "The response does not contain total tokens.".to_string(),
+            ))?,
+        };
+        self.total_usage = self.total_usage + self.last_usage;
         Ok(response_text)
     }
     /// Send the request to the DeepSeek API. This function is asynchronous.
@@ -165,12 +269,12 @@ impl DeepSeekClient {
         }
     }
     /// Convert the chats to json format.
-    fn chats_to_json(chats: Vec<Chat>) -> JsonValue {
+    fn chats_to_json(chats: &Vec<Chat>) -> JsonValue {
         let mut json_chats = Vec::new();
         for chat in chats {
             json_chats.push(object! {
-                content: chat.content,
-                role: chat.role,
+                content: chat.content.clone(),
+                role: chat.role.clone(),
             });
         }
         json::JsonValue::Array(json_chats)
@@ -558,9 +662,10 @@ mod test {
     #[test]
     fn send_request_simple() {
         let rt = Runtime::new().unwrap();
-        let deepseek_client = DeepSeekClient::new(DEEPSEEK_API_URL, DeepSeekModel::DeepseekChat)
-            .api_key_from_file("./api_key.txt")
-            .unwrap();
+        let mut deepseek_client =
+            DeepSeekClient::new(DEEPSEEK_API_URL, DeepSeekModel::DeepseekChat)
+                .api_key_from_file("./api_key.txt")
+                .unwrap();
         let chats = vec![
             Chat::new(
                 "system".to_string(),
@@ -568,7 +673,7 @@ mod test {
             ),
             Chat::new("user".to_string(), "Hi".to_string()),
         ];
-        let response = rt.block_on(deepseek_client.send_request(chats));
+        let response = rt.block_on(deepseek_client.send_request(&chats));
         match response {
             Ok(response) => {
                 println!("Response: {}", response);
@@ -584,11 +689,12 @@ mod test {
     /// Test the send_request function with complex parameters.
     fn send_request_complex() {
         let rt = Runtime::new().unwrap();
-        let deepseek_client = DeepSeekClient::new(DEEPSEEK_API_URL, DeepSeekModel::DeepseekChat)
-            .api_key_from_file("./api_key.txt")
-            .unwrap()
-            .logprobs(true)
-            .top_logprobs(Some(3));
+        let mut deepseek_client =
+            DeepSeekClient::new(DEEPSEEK_API_URL, DeepSeekModel::DeepseekChat)
+                .api_key_from_file("./api_key.txt")
+                .unwrap()
+                .logprobs(true)
+                .top_logprobs(Some(3));
         let chats = vec![
             Chat::new(
                 "system".to_string(),
@@ -596,7 +702,7 @@ mod test {
             ),
             Chat::new("user".to_string(), "Hi".to_string()),
         ];
-        let response = rt.block_on(deepseek_client.send_request(chats));
+        let response = rt.block_on(deepseek_client.send_request(&chats));
         match response {
             Ok(response) => {
                 println!("Response: {}", response);

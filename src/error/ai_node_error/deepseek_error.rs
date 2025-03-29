@@ -9,6 +9,8 @@ pub enum DeepSeekErrorType {
     RequestParamError,
     /// The reqeust send to deepseek is failed.
     RequestError,
+    /// The response from deepseek is not valid.
+    ResponseError,
     /// Error with api key
     ApiKeyError,
 }
@@ -38,6 +40,9 @@ impl std::fmt::Display for DeepSeekError {
             }
             DeepSeekErrorType::RequestError => {
                 write!(f, "RequestError: {}", self.message)
+            }
+            DeepSeekErrorType::ResponseError => {
+                write!(f, "ResponseError: {}", self.message)
             }
             DeepSeekErrorType::ApiKeyError => {
                 write!(f, "ApiKeyError: {}", self.message)
