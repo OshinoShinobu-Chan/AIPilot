@@ -23,7 +23,7 @@ pub mod deepseek;
 use crate::error::ai_node_error::AINodeResult;
 use deepseek::DeepSeekClient;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 /// The struct of one round of the chat.
 pub struct Chat {
     role: String,
@@ -37,13 +37,13 @@ impl Chat {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 /// The enum of the AI service.
 pub enum AIService {
     DeepSeek { client: DeepSeekClient },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 /// The struct of the AI node.
 pub struct AINode {
     /// The AI service.
@@ -85,7 +85,35 @@ impl AINode {
             input: String::new(),
         }
     }
-    pub async fn execute(&mut self) -> AINodeResult<String> {
+    /// Execute the AI service and get the output with input params.
+    pub async fn execute(&mut self, input: String) -> AINodeResult<String> {
+        if let Ok(params) = json::parse(self.input.as_str()) {
+            if params["history"].is_array() {
+                self.histroy = params["history"]
+                    .members()
+                    .map(|x| Chat::new(x["role"].to_string(), x["content"].to_string()))
+                    .collect();
+            }
+            if params["prompt_prefix"].is_string() {
+                self.prompt_prefix = params["prompt_prefix"].to_string();
+            }
+            if params["prompt_suffix"].is_string() {
+                self.prompt_suffix = params["prompt_suffix"].to_string();
+            }
+            if params["input"].is_string() {
+                self.input = params["input"].to_string();
+            }
+            // role must be set after history, because the role is the first message in the history.
+            if params["role"].is_object() {
+                self.set_role(Some(params["role"].to_string()));
+            }
+        } else {
+            self.input = input;
+        }
+        self.execute_raw().await
+    }
+    /// Execute the AI service and get the output.
+    async fn execute_raw(&mut self) -> AINodeResult<String> {
         match &mut self.service {
             AIService::DeepSeek { client: _ } => self.deepseek_execute().await,
         }
@@ -199,7 +227,7 @@ mod test {
                 "你是一个可爱的猫娘，请每一句话都使用猫娘的语气，并一定以“喵”结尾。".to_string(),
             ))
             .input("早上好".to_string());
-        let result = ai_node.execute();
+        let result = ai_node.execute_raw();
         let rt = Runtime::new().unwrap();
         let result = rt.block_on(result);
         match result {
